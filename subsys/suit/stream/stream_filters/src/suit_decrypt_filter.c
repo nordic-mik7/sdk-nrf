@@ -403,6 +403,13 @@ suit_plat_err_t suit_decrypt_filter_get(struct stream_sink *dec_sink,
 
 	status = psa_aead_update_ad(&ctx.operation, enc_info->aad.value, enc_info->aad.len);
 
+	if (status != PSA_SUCCESS) {
+		LOG_ERR("Failed to pass additional data for authentication operation: %d", status);
+		psa_aead_abort(&ctx.operation);
+		ctx.in_use = false;
+		return SUIT_PLAT_ERR_CRASH;
+	}
+
 	ctx.stored_tag_bytes = 0;
 	memcpy(&ctx.enc_sink, enc_sink, sizeof(struct stream_sink));
 
