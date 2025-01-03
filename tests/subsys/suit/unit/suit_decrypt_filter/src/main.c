@@ -16,12 +16,12 @@
 #define ENC_INFO_DEFAULT_INIT { \
 							    .enc_alg_id = suit_cose_aes256_gcm, \
 							    .IV = { \
-							  		   .value = iv_direct, \
+							  		     .value = iv_direct, \
 				                         .len = sizeof(iv_direct), \
 			                          }, \
 		                        .aad = { \
 				                          .value = aad, \
-				                          .len = strlen(aad), \
+				                          .len = sizeof(aad), \
 			                           }, \
 		                        .kw_alg_id = suit_cose_direct, \
 		                        .kw_key.direct = {.key_id = {.value = cek_key_id_cbor, \
@@ -66,84 +66,144 @@ static const uint8_t cek_key_id_cbor[] = {
 	};
 
 struct suit_decrypt_filter_tests_fixture {
-	char dummy; //nothing for now
+	struct stream_sink dec_sink;
+    struct stream_sink ram_sink;	
+	size_t decrypted_output_length;
+	psa_status_t aead_update_status;
+	psa_status_t aead_verify_status;
+
+	// ram_sink interfaces call counters. Not really 'fixtures', but something 
+	// we verify as a side effect of test run. 
+	int ram_sink_write_call_cnt;
+	int ram_sink_erase_call_cnt;
+	int ram_sink_release_call_cnt;
 };
 
-static const uint8_t plaintext[] = {
-	"This is a sample plaintext for testing the decryption filter",
-};
+static struct suit_decrypt_filter_tests_fixture tests_fixture;
 
-static const char aad[] = {
+static const uint8_t aad[] = {
 	"sample aad"
 };
 
-static struct stream_sink dec_sink;
-static struct stream_sink ram_sink;
-
-static void get_cbor_key_id(psa_key_id_t const key_id, uint8_t * const cbor_key_id, size_t const cbor_key_id_len)
+// Custom fake functions implementation - for returning values by reference
+static suit_plat_err_t custom_suit_plat_decode_key_id(struct zcbor_string *key_id, uint32_t *integer_key_id)
 {
-	if (cbor_key_id_len < 5)
-		return;
+	(void)key_id;
 
-	/* Encode key ID as CBOR unsigned int */
-	cbor_key_id[1] = ((key_id >> 24) & 0xFF);
-	cbor_key_id[2] = ((key_id >> 16) & 0xFF);
-	cbor_key_id[3] = ((key_id >> 8) & 0xFF);
-	cbor_key_id[4] = ((key_id >> 0) & 0xFF);
+	*integer_key_id = KEY_ID_FWENC_APPLICATION_GEN1;
+	return SUIT_PLAT_SUCCESS;
+}
+
+static psa_status_t custom_psa_aead_update(psa_aead_operation_t *operation,
+                             			   const uint8_t *input,
+                             			   size_t input_length,
+                             			   uint8_t *output,
+                             			   size_t output_size,
+                             			   size_t *output_length)
+{
+	(void)operation;
+	(void)input;
+	(void)input_length;
+	(void)output;
+	(void)output_size;
+
+	*output_length = tests_fixture.decrypted_output_length;
+
+	return tests_fixture.aead_update_status;
+}
+
+static psa_status_t custom_psa_aead_verify(psa_aead_operation_t *operation,
+                             			   uint8_t *plaintext,
+                             			   size_t plaintext_size,
+                             			   size_t *plaintext_length,
+                             			   const uint8_t *tag,
+                             			   size_t tag_length)
+{
+	(void)operation;
+	(void)plaintext;
+	(void)plaintext_size;
+	(void)tag;
+	(void)tag_length;
+
+	*plaintext_length = tests_fixture.decrypted_output_length;
+
+	return tests_fixture.aead_verify_status;
+}
+
+// dummy interface functions for the decrypted data output sink (fixture->ram_sink)
+static suit_plat_err_t release(void *ctx)
+{
+	(void)ctx;
+
+	tests_fixture.ram_sink_release_call_cnt++;
+
+	return SUIT_PLAT_SUCCESS;
+}
+
+static suit_plat_err_t erase(void *ctx)
+{
+	(void)ctx;
+
+	tests_fixture.ram_sink_erase_call_cnt++;
+
+	return SUIT_PLAT_SUCCESS;
 }
 
 static suit_plat_err_t write_ram(void *ctx, const uint8_t *buf, size_t size)
 {
-	// dummy write interface function for the decrypted data output sink 
 
 	(void)ctx;
 	(void)buf;
 	(void)size;
 
-	return 0;
+	tests_fixture.ram_sink_write_call_cnt++;
+
+	return SUIT_PLAT_SUCCESS;
 }
 
 static suit_plat_err_t used_storage(void *ctx, size_t *size)
 {
-	// dummy used_storage interface function for the decrypted data output sink
-
 	(void)ctx;
 	(void)size;
 
-	return 0;
+	return SUIT_PLAT_SUCCESS;
 }
 
 static void *test_suite_setup(void)
 {
-	static struct suit_decrypt_filter_tests_fixture fixture = {0};
-
-	ram_sink.write = write_ram;
-	ram_sink.used_storage = used_storage;
-
-	return &fixture;
+	return &tests_fixture;
 }
 
-static void test_suite_teardown(void *f)
+static void test_suite_teardown(void *fixture)
 {
-	(void)f;
+	(void)fixture;
 }
 
-static void test_before(void *data)
+static void test_before(void *f)
 {
+	struct suit_decrypt_filter_tests_fixture *fixture = 
+			(struct suit_decrypt_filter_tests_fixture* )f;
+
 	/* Reset mocks */
 	mocks_reset();
 
 	/* Reset common FFF internal structures */
 	FFF_RESET_HISTORY();
 
-	if (dec_sink.release && dec_sink.ctx)
+	if (fixture->dec_sink.release && fixture->dec_sink.ctx)
 	{
-		dec_sink.release(dec_sink.ctx);
-		memset(&dec_sink, 0, sizeof(dec_sink));
+		fixture->dec_sink.release(fixture->dec_sink.ctx);
 	}
+	
+	memset(fixture, 0, sizeof(struct suit_decrypt_filter_tests_fixture));
+	fixture->ram_sink.write = write_ram;
+	fixture->ram_sink.used_storage = used_storage;
+	fixture->ram_sink.erase = erase;
+	fixture->ram_sink.release = release;
 }
 
-ZTEST_SUITE(suit_decrypt_filter_tests, NULL, test_suite_setup, test_before, NULL, test_suite_teardown);
+ZTEST_SUITE(suit_decrypt_filter_tests, NULL, test_suite_setup, test_before, 
+		NULL, test_suite_teardown);
 
 ZTEST_F(suit_decrypt_filter_tests, test_key_id_validation_fail)
 {
@@ -152,24 +212,25 @@ ZTEST_F(suit_decrypt_filter_tests, test_key_id_validation_fail)
 	suit_mci_fw_encryption_key_id_validate_fake.return_val = MCI_ERR_WRONGKEYID;
 	suit_plat_decode_key_id_fake.return_val = SUIT_PLAT_SUCCESS;
 
-	suit_plat_err_t err = suit_decrypt_filter_get(&dec_sink, &enc_info, &sample_class_id, &ram_sink);
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+	
 	zassert_equal(err, SUIT_PLAT_ERR_AUTHENTICATION,
-		      "Incorrect error code when getting decrypt filter");
-
+		    "Incorrect error code when getting decrypt filter");
 	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
-		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
+		    "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
-			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
+			"Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal(psa_aead_decrypt_setup_fake.call_count, 0,
-			 "Invalid number of calls to psa_aead_decrypt_setup");
+			"Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal(psa_aead_set_nonce_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_set_nonce");
 	zassert_equal(psa_aead_update_ad_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal_ptr(dec_sink.ctx, NULL,
-			"Invalid dec_sink.ctx value");
+	zassert_equal_ptr(fixture->dec_sink.ctx, NULL,
+			"Invalid fixture->dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_decryption_setup_fail)
@@ -180,24 +241,25 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_setup_fail)
 	suit_plat_decode_key_id_fake.return_val = SUIT_PLAT_SUCCESS;
 	psa_aead_decrypt_setup_fake.return_val = PSA_ERROR_GENERIC_ERROR;
 	
-	suit_plat_err_t err = suit_decrypt_filter_get(&dec_sink, &enc_info, &sample_class_id, &ram_sink);
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+	
 	zassert_equal(err, SUIT_PLAT_ERR_CRASH,
-		      "Incorrect error code when getting decrypt filter");
-
+		    "Incorrect error code when getting decrypt filter");
 	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
-		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
+		    "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
-			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
+			"Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal(psa_aead_decrypt_setup_fake.call_count, 1,
-			 "Invalid number of calls to psa_aead_decrypt_setup");
+			"Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal(psa_aead_set_nonce_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_set_nonce");
 	zassert_equal(psa_aead_update_ad_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal_ptr(dec_sink.ctx, NULL,
-			"Invalid dec_sink.ctx value");
+	zassert_equal_ptr(fixture->dec_sink.ctx, NULL,
+			"Invalid fixture->dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_decryption_set_nonce_fail)
@@ -209,28 +271,29 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_set_nonce_fail)
 	psa_aead_decrypt_setup_fake.return_val = PSA_SUCCESS;
 	psa_aead_set_nonce_fake.return_val = PSA_ERROR_GENERIC_ERROR;
 	
-	suit_plat_err_t err = suit_decrypt_filter_get(&dec_sink, &enc_info, &sample_class_id, &ram_sink);
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+	
 	zassert_equal(err, SUIT_PLAT_ERR_CRASH,
-		      "Incorrect error code when getting decrypt filter");
-
+		    "Incorrect error code when getting decrypt filter");
 	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
-		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
+		    "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
-			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
+			"Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal(psa_aead_decrypt_setup_fake.call_count, 1,
-			 "Invalid number of calls to psa_aead_decrypt_setup");
+			"Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal_ptr(psa_aead_set_nonce_fake.arg1_val, iv_direct,
-			 "Invalid IV passed to psa_aead_set_nonce");
+			"Invalid IV passed to psa_aead_set_nonce");
 	zassert_equal(psa_aead_set_nonce_fake.arg2_val, sizeof(iv_direct),
-			 "Invalid IV length passed to psa_aead_set_nonce");
+			"Invalid IV length passed to psa_aead_set_nonce");
 	zassert_equal(psa_aead_set_nonce_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_set_nonce");
 	zassert_equal(psa_aead_update_ad_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal_ptr(dec_sink.ctx, NULL,
-			"Invalid dec_sink.ctx value");
+	zassert_equal_ptr(fixture->dec_sink.ctx, NULL,
+			"Invalid fixture->dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_decryption_update_ad_fail)
@@ -243,14 +306,15 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_update_ad_fail)
 	psa_aead_set_nonce_fake.return_val = PSA_SUCCESS;
 	psa_aead_update_ad_fake.return_val = PSA_ERROR_GENERIC_ERROR;
 	
-	suit_plat_err_t err = suit_decrypt_filter_get(&dec_sink, &enc_info, &sample_class_id, &ram_sink);
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+	
 	zassert_equal(err, SUIT_PLAT_ERR_CRASH,
-		      "Incorrect error code when getting decrypt filter");
-
+		    "Incorrect error code when getting decrypt filter");
 	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
-		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
+		    "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
-			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
+			"Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal(psa_aead_decrypt_setup_fake.call_count, 1,
 			 "Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal_ptr(psa_aead_set_nonce_fake.arg1_val, iv_direct,
@@ -263,12 +327,12 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_update_ad_fail)
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal_ptr(psa_aead_update_ad_fake.arg1_val, aad,
 			 "Invalid ad passed to psa_aead_update_ad");
-	zassert_equal(psa_aead_update_ad_fake.arg2_val, strlen(aad),
+	zassert_equal(psa_aead_update_ad_fake.arg2_val, sizeof(aad),
 			 "Invalid ad length passed to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal_ptr(dec_sink.ctx, NULL,
-			"Invalid dec_sink.ctx value");
+	zassert_equal_ptr(fixture->dec_sink.ctx, NULL,
+			"Invalid fixture->dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_filter_get_happy_path)
@@ -281,14 +345,15 @@ ZTEST_F(suit_decrypt_filter_tests, test_filter_get_happy_path)
 	psa_aead_set_nonce_fake.return_val = PSA_SUCCESS;
 	psa_aead_update_ad_fake.return_val = PSA_SUCCESS;
 	
-	suit_plat_err_t err = suit_decrypt_filter_get(&dec_sink, &enc_info, &sample_class_id, &ram_sink);
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+	
 	zassert_equal(err, SUIT_PLAT_SUCCESS,
-		      "Incorrect error code when getting decrypt filter");
-
+		    "Incorrect error code when getting decrypt filter");
 	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
-		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
+		    "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
-			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
+			"Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal(psa_aead_decrypt_setup_fake.call_count, 1,
 			 "Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal_ptr(psa_aead_set_nonce_fake.arg1_val, iv_direct,
@@ -301,11 +366,152 @@ ZTEST_F(suit_decrypt_filter_tests, test_filter_get_happy_path)
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal_ptr(psa_aead_update_ad_fake.arg1_val, aad,
 			 "Invalid ad passed to psa_aead_update_ad");
-	zassert_equal(psa_aead_update_ad_fake.arg2_val, strlen(aad),
+	zassert_equal(psa_aead_update_ad_fake.arg2_val, sizeof(aad),
 			 "Invalid ad length passed to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_not_equal(   dec_sink.ctx && dec_sink.write && dec_sink.erase
-					  && dec_sink.release && dec_sink.flush && dec_sink.used_storage, NULL,
-			"Invalid dec_sink.ctx value");
+	zassert_not_equal(   fixture->dec_sink.ctx && fixture->dec_sink.write 
+					  && fixture->dec_sink.erase && fixture->dec_sink.release 
+					  && fixture->dec_sink.flush && fixture->dec_sink.used_storage, 0,
+			"Invalid fixture->dec_sink.ctx value");
+}
+
+ZTEST_F(suit_decrypt_filter_tests, test_write_filter_not_initialized)
+{
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
+
+	suit_plat_decode_key_id_fake.custom_fake = custom_suit_plat_decode_key_id;
+
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+		    "Incorrect error code when getting decrypt filter");
+	
+	err = fixture->dec_sink.release(fixture->dec_sink.ctx);
+
+	// we expect SUIT_PLAT_ERR_INCORRECT_STATE because we didn't store any tag data.
+	zassert_equal(err, SUIT_PLAT_ERR_INCORRECT_STATE,
+			"Incorrect error code when releasing filter");
+	zassert_equal(fixture->ram_sink_release_call_cnt, 1,
+			"Incorrect number of ram_sink release function calls");
+	
+	err = fixture->dec_sink.write(fixture->dec_sink.ctx, ciphertext_direct, 
+								sizeof(ciphertext_direct));
+
+	zassert_equal(err, SUIT_PLAT_ERR_INVAL,
+			"Incorrect error code when calling filter write interface");
+}
+
+ZTEST_F(suit_decrypt_filter_tests, test_write_happy_path)
+{
+	const uint8_t dummy_decrypted_array[256]; // Array of random values big enoguh to 
+											  // exceed SINGLE_CHUNK_SIZE in decrypt filter.
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
+
+	suit_plat_decode_key_id_fake.custom_fake = custom_suit_plat_decode_key_id;
+	
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+		    "Incorrect error code when getting decrypt filter");
+
+	psa_aead_update_fake.custom_fake = custom_psa_aead_update;
+	fixture->aead_update_status = PSA_SUCCESS;
+	fixture->decrypted_output_length = 100; // Anything greater than 0.
+	
+	err = fixture->dec_sink.write(fixture->dec_sink.ctx, dummy_decrypted_array, 
+								sizeof(dummy_decrypted_array));
+
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+			"Incorrect error code when calling filter write interface");
+	zassert_equal(fixture->ram_sink_write_call_cnt, 2,
+			"Incorrect number of ram_sink write function calls");
+}
+
+ZTEST_F(suit_decrypt_filter_tests, test_flush_verify_fail)
+{
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
+
+	suit_plat_decode_key_id_fake.custom_fake = custom_suit_plat_decode_key_id;
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+		    "Incorrect error code when getting decrypt filter");
+
+	psa_aead_update_fake.custom_fake = custom_psa_aead_update;
+	fixture->aead_update_status = PSA_SUCCESS;
+	fixture->decrypted_output_length = 100; // Anything greater than 0.
+
+	err = fixture->dec_sink.write(fixture->dec_sink.ctx, ciphertext_direct, 
+								sizeof(ciphertext_direct));
+	
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+			"Incorrect error code when calling filter write interface");
+
+	psa_aead_verify_fake.custom_fake = custom_psa_aead_verify;
+	fixture->aead_verify_status = PSA_ERROR_GENERIC_ERROR;
+	
+	err = fixture->dec_sink.flush(fixture->dec_sink.ctx);
+
+	zassert_equal(err, SUIT_PLAT_ERR_AUTHENTICATION,
+			"Incorrect error code when calling filter flush interface");
+	zassert_equal(fixture->ram_sink_erase_call_cnt, 1,
+			"Incorrect number of ram_sink write function calls");
+	zassert_equal(psa_aead_abort_fake.call_count, 1,
+			"Invalid number of calls to psa_aead_abort");
+	// zassert_equal(fixture->dec_sink.ctx->cek_key_id, 0,
+	// 		"Invalid cek_key_id of decrypt stream context");
+	// zassert_equal(fixture->dec_sink.ctx->operation, 0,
+	// 		"Invalid operation of decrypt stream context");
+	// zassert_equal(fixture->dec_sink.ctx->tag_size, 0,
+	// 		"Invalid tag_size of decrypt stream context");
+	// zassert_equal(fixture->dec_sink.ctx->tag_bytes, 0,
+	// 		"Invalid tag_bytes of decrypt stream context");
+}
+
+ZTEST_F(suit_decrypt_filter_tests, test_flush_happy_path)
+{
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
+
+	suit_plat_decode_key_id_fake.custom_fake = custom_suit_plat_decode_key_id;
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+		    "Incorrect error code when getting decrypt filter");
+
+	psa_aead_update_fake.custom_fake = custom_psa_aead_update;
+	fixture->aead_update_status = PSA_SUCCESS;
+	fixture->decrypted_output_length = 100; // Anything greater than 0.
+
+	err = fixture->dec_sink.write(fixture->dec_sink.ctx, ciphertext_direct, 
+								sizeof(ciphertext_direct));
+	
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+			"Incorrect error code when calling filter write interface");
+
+	psa_aead_verify_fake.custom_fake = custom_psa_aead_verify;
+	fixture->aead_verify_status = PSA_SUCCESS;
+	fixture->decrypted_output_length = 100; // Anything greater than 0.
+	
+	err = fixture->dec_sink.flush(fixture->dec_sink.ctx);
+
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+			"Incorrect error code when calling filter flush interface");
+	zassert_equal(fixture->ram_sink_write_call_cnt, 2, // Called 2 times because we
+													   // also call write (< SINGLE_CHUNK_SIZE).
+			"Incorrect number of ram_sink write function calls");
+	zassert_equal(psa_aead_abort_fake.call_count, 0,
+			"Invalid number of calls to psa_aead_abort");
+	// zassert_equal(fixture->dec_sink.ctx->cek_key_id, 0,
+	// 		"Invalid cek_key_id of decrypt stream context");
+	// zassert_equal(fixture->dec_sink.ctx->operation, 0,
+	// 		"Invalid operation of decrypt stream context");
+	// zassert_equal(fixture->dec_sink.ctx->tag_size, 0,
+	// 		"Invalid tag_size of decrypt stream context");
+	// zassert_equal(fixture->dec_sink.ctx->tag_bytes, 0,
+	// 		"Invalid tag_bytes of decrypt stream context");
 }
