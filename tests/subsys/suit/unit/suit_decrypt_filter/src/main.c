@@ -13,6 +13,21 @@
 
 #define KEY_ID_FWENC_APPLICATION_GEN1 0x40022000
 
+#define ENC_INFO_DEFAULT_INIT { \
+							    .enc_alg_id = suit_cose_aes256_gcm, \
+							    .IV = { \
+							  		   .value = iv_direct, \
+				                         .len = sizeof(iv_direct), \
+			                          }, \
+		                        .aad = { \
+				                          .value = aad, \
+				                          .len = strlen(aad), \
+			                           }, \
+		                        .kw_alg_id = suit_cose_direct, \
+		                        .kw_key.direct = {.key_id = {.value = cek_key_id_cbor, \
+			                    .len = sizeof(cek_key_id_cbor)},} \
+	                           }
+
 /**
  * Encryption without wrapping CEK achieved by running:
  *
@@ -46,6 +61,9 @@ static const suit_manifest_class_id_t sample_class_id = {
 	 0x36}
 };
 
+static const uint8_t cek_key_id_cbor[] = {
+		0x1A, 0x40, 0x02, 0x20, 0x00,
+	};
 
 struct suit_decrypt_filter_tests_fixture {
 	char dummy; //nothing for now
@@ -59,7 +77,8 @@ static const char aad[] = {
 	"sample aad"
 };
 
-static struct stream_sink dec_sink = {0};
+static struct stream_sink dec_sink;
+static struct stream_sink ram_sink;
 
 static void get_cbor_key_id(psa_key_id_t const key_id, uint8_t * const cbor_key_id, size_t const cbor_key_id_len)
 {
@@ -75,24 +94,31 @@ static void get_cbor_key_id(psa_key_id_t const key_id, uint8_t * const cbor_key_
 
 static suit_plat_err_t write_ram(void *ctx, const uint8_t *buf, size_t size)
 {
+	// dummy write interface function for the decrypted data output sink 
+
 	(void)ctx;
 	(void)buf;
 	(void)size;
 
-	// dummy write interface function for the decrypted data output sink 
+	return 0;
 }
 
 static suit_plat_err_t used_storage(void *ctx, size_t *size)
 {
+	// dummy used_storage interface function for the decrypted data output sink
+
 	(void)ctx;
 	(void)size;
 
-	// dummy used_storage interface function for the decrypted data output sink
+	return 0;
 }
 
 static void *test_suite_setup(void)
 {
 	static struct suit_decrypt_filter_tests_fixture fixture = {0};
+
+	ram_sink.write = write_ram;
+	ram_sink.used_storage = used_storage;
 
 	return &fixture;
 }
@@ -112,7 +138,6 @@ static void test_before(void *data)
 
 	if (dec_sink.release && dec_sink.ctx)
 	{
-		printf("realese me!\n");
 		dec_sink.release(dec_sink.ctx);
 		memset(&dec_sink, 0, sizeof(dec_sink));
 	}
@@ -122,29 +147,8 @@ ZTEST_SUITE(suit_decrypt_filter_tests, NULL, test_suite_setup, test_before, NULL
 
 ZTEST_F(suit_decrypt_filter_tests, test_key_id_validation_fail)
 {
-	struct stream_sink ram_sink = {0};
-	uint8_t cek_key_id_cbor[] = {
-		0x1A, 0x00, 0x00, 0x00, 0x00,
-	};
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
 
-	get_cbor_key_id(KEY_ID_FWENC_APPLICATION_GEN1, cek_key_id_cbor, sizeof(cek_key_id_cbor));
-
-	struct suit_encryption_info enc_info = {
-		.enc_alg_id = suit_cose_aes256_gcm,
-		.IV = {
-				.value = iv_direct,
-				.len = sizeof(iv_direct),
-			},
-		.aad = {
-				.value = aad,
-				.len = strlen(aad),
-			},
-		.kw_alg_id = suit_cose_direct,
-		.kw_key.direct = {.key_id = {.value = cek_key_id_cbor,
-			       .len = sizeof(cek_key_id_cbor)},}
-	};
-
-	ram_sink.write = write_ram;
 	suit_mci_fw_encryption_key_id_validate_fake.return_val = MCI_ERR_WRONGKEYID;
 	suit_plat_decode_key_id_fake.return_val = SUIT_PLAT_SUCCESS;
 
@@ -152,7 +156,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_key_id_validation_fail)
 	zassert_equal(err, SUIT_PLAT_ERR_AUTHENTICATION,
 		      "Incorrect error code when getting decrypt filter");
 
-	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
+	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
 		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
 			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
@@ -164,35 +168,14 @@ ZTEST_F(suit_decrypt_filter_tests, test_key_id_validation_fail)
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal(dec_sink.ctx, NULL,
+	zassert_equal_ptr(dec_sink.ctx, NULL,
 			"Invalid dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_decryption_setup_fail)
 {
-	struct stream_sink ram_sink = {0};
-	uint8_t cek_key_id_cbor[] = {
-		0x1A, 0x00, 0x00, 0x00, 0x00,
-	};
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
 
-	get_cbor_key_id(KEY_ID_FWENC_APPLICATION_GEN1, cek_key_id_cbor, sizeof(cek_key_id_cbor));
-
-	struct suit_encryption_info enc_info = {
-		.enc_alg_id = suit_cose_aes256_gcm,
-		.IV = {
-				.value = iv_direct,
-				.len = sizeof(iv_direct),
-			},
-		.aad = {
-				.value = aad,
-				.len = strlen(aad),
-			},
-		.kw_alg_id = suit_cose_direct,
-		.kw_key.direct = {.key_id = {.value = cek_key_id_cbor,
-			       .len = sizeof(cek_key_id_cbor)},}
-	};
-
-	ram_sink.write = write_ram;
 	suit_mci_fw_encryption_key_id_validate_fake.return_val = SUIT_PLAT_SUCCESS;
 	suit_plat_decode_key_id_fake.return_val = SUIT_PLAT_SUCCESS;
 	psa_aead_decrypt_setup_fake.return_val = PSA_ERROR_GENERIC_ERROR;
@@ -201,7 +184,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_setup_fail)
 	zassert_equal(err, SUIT_PLAT_ERR_CRASH,
 		      "Incorrect error code when getting decrypt filter");
 
-	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
+	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
 		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
 			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
@@ -213,35 +196,14 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_setup_fail)
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal(dec_sink.ctx, NULL,
+	zassert_equal_ptr(dec_sink.ctx, NULL,
 			"Invalid dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_decryption_set_nonce_fail)
 {
-	struct stream_sink ram_sink = {0};
-	uint8_t cek_key_id_cbor[] = {
-		0x1A, 0x00, 0x00, 0x00, 0x00,
-	};
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
 
-	get_cbor_key_id(KEY_ID_FWENC_APPLICATION_GEN1, cek_key_id_cbor, sizeof(cek_key_id_cbor));
-
-	struct suit_encryption_info enc_info = {
-		.enc_alg_id = suit_cose_aes256_gcm,
-		.IV = {
-				.value = iv_direct,
-				.len = sizeof(iv_direct),
-			},
-		.aad = {
-				.value = aad,
-				.len = strlen(aad),
-			},
-		.kw_alg_id = suit_cose_direct,
-		.kw_key.direct = {.key_id = {.value = cek_key_id_cbor,
-			       .len = sizeof(cek_key_id_cbor)},}
-	};
-
-	ram_sink.write = write_ram;
 	suit_mci_fw_encryption_key_id_validate_fake.return_val = SUIT_PLAT_SUCCESS;
 	suit_plat_decode_key_id_fake.return_val = SUIT_PLAT_SUCCESS;
 	psa_aead_decrypt_setup_fake.return_val = PSA_SUCCESS;
@@ -251,7 +213,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_set_nonce_fail)
 	zassert_equal(err, SUIT_PLAT_ERR_CRASH,
 		      "Incorrect error code when getting decrypt filter");
 
-	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
+	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
 		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
 			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
@@ -259,7 +221,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_set_nonce_fail)
 			 "Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal_ptr(psa_aead_set_nonce_fake.arg1_val, iv_direct,
 			 "Invalid IV passed to psa_aead_set_nonce");
-	zassert_equal_ptr(psa_aead_set_nonce_fake.arg2_val, sizeof(iv_direct),
+	zassert_equal(psa_aead_set_nonce_fake.arg2_val, sizeof(iv_direct),
 			 "Invalid IV length passed to psa_aead_set_nonce");
 	zassert_equal(psa_aead_set_nonce_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_set_nonce");
@@ -267,35 +229,14 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_set_nonce_fail)
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal(dec_sink.ctx, NULL,
+	zassert_equal_ptr(dec_sink.ctx, NULL,
 			"Invalid dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_decryption_update_ad_fail)
 {
-	struct stream_sink ram_sink = {0};
-	uint8_t cek_key_id_cbor[] = {
-		0x1A, 0x00, 0x00, 0x00, 0x00,
-	};
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
 
-	get_cbor_key_id(KEY_ID_FWENC_APPLICATION_GEN1, cek_key_id_cbor, sizeof(cek_key_id_cbor));
-
-	struct suit_encryption_info enc_info = {
-		.enc_alg_id = suit_cose_aes256_gcm,
-		.IV = {
-				.value = iv_direct,
-				.len = sizeof(iv_direct),
-			},
-		.aad = {
-				.value = aad,
-				.len = strlen(aad),
-			},
-		.kw_alg_id = suit_cose_direct,
-		.kw_key.direct = {.key_id = {.value = cek_key_id_cbor,
-			       .len = sizeof(cek_key_id_cbor)},}
-	};
-
-	ram_sink.write = write_ram;
 	suit_mci_fw_encryption_key_id_validate_fake.return_val = SUIT_PLAT_SUCCESS;
 	suit_plat_decode_key_id_fake.return_val = SUIT_PLAT_SUCCESS;
 	psa_aead_decrypt_setup_fake.return_val = PSA_SUCCESS;
@@ -306,7 +247,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_update_ad_fail)
 	zassert_equal(err, SUIT_PLAT_ERR_CRASH,
 		      "Incorrect error code when getting decrypt filter");
 
-	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
+	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
 		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
 			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
@@ -314,7 +255,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_update_ad_fail)
 			 "Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal_ptr(psa_aead_set_nonce_fake.arg1_val, iv_direct,
 			 "Invalid IV passed to psa_aead_set_nonce");
-	zassert_equal_ptr(psa_aead_set_nonce_fake.arg2_val, sizeof(iv_direct),
+	zassert_equal(psa_aead_set_nonce_fake.arg2_val, sizeof(iv_direct),
 			 "Invalid IV length passed to psa_aead_set_nonce");
 	zassert_equal(psa_aead_set_nonce_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_set_nonce");
@@ -322,40 +263,18 @@ ZTEST_F(suit_decrypt_filter_tests, test_decryption_update_ad_fail)
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal_ptr(psa_aead_update_ad_fake.arg1_val, aad,
 			 "Invalid ad passed to psa_aead_update_ad");
-	zassert_equal_ptr(psa_aead_update_ad_fake.arg2_val, strlen(aad),
+	zassert_equal(psa_aead_update_ad_fake.arg2_val, strlen(aad),
 			 "Invalid ad length passed to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_abort");
-	zassert_equal(dec_sink.ctx, NULL,
+	zassert_equal_ptr(dec_sink.ctx, NULL,
 			"Invalid dec_sink.ctx value");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_filter_get_happy_path)
 {
-	struct stream_sink ram_sink = {0};
-	uint8_t cek_key_id_cbor[] = {
-		0x1A, 0x00, 0x00, 0x00, 0x00,
-	};
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
 
-	get_cbor_key_id(KEY_ID_FWENC_APPLICATION_GEN1, cek_key_id_cbor, sizeof(cek_key_id_cbor));
-
-	struct suit_encryption_info enc_info = {
-		.enc_alg_id = suit_cose_aes256_gcm,
-		.IV = {
-				.value = iv_direct,
-				.len = sizeof(iv_direct),
-			},
-		.aad = {
-				.value = aad,
-				.len = strlen(aad),
-			},
-		.kw_alg_id = suit_cose_direct,
-		.kw_key.direct = {.key_id = {.value = cek_key_id_cbor,
-			       .len = sizeof(cek_key_id_cbor)},}
-	};
-
-	ram_sink.write = write_ram;
-	ram_sink.used_storage = used_storage;
 	suit_mci_fw_encryption_key_id_validate_fake.return_val = SUIT_PLAT_SUCCESS;
 	suit_plat_decode_key_id_fake.return_val = SUIT_PLAT_SUCCESS;
 	psa_aead_decrypt_setup_fake.return_val = PSA_SUCCESS;
@@ -366,7 +285,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_filter_get_happy_path)
 	zassert_equal(err, SUIT_PLAT_SUCCESS,
 		      "Incorrect error code when getting decrypt filter");
 
-	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
+	zassert_equal(suit_mci_fw_encryption_key_id_validate_fake.call_count, 1,
 		      "Invalid number of calls to suit_mci_fw_encryption_key_id_validate");
 	zassert_equal_ptr(suit_mci_fw_encryption_key_id_validate_fake.arg0_val, &sample_class_id,
 			   "Invalid class ID passed to suit_mci_fw_encryption_key_id_validate");
@@ -374,7 +293,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_filter_get_happy_path)
 			 "Invalid number of calls to psa_aead_decrypt_setup");
 	zassert_equal_ptr(psa_aead_set_nonce_fake.arg1_val, iv_direct,
 			 "Invalid IV passed to psa_aead_set_nonce");
-	zassert_equal_ptr(psa_aead_set_nonce_fake.arg2_val, sizeof(iv_direct),
+	zassert_equal(psa_aead_set_nonce_fake.arg2_val, sizeof(iv_direct),
 			 "Invalid IV length passed to psa_aead_set_nonce");
 	zassert_equal(psa_aead_set_nonce_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_set_nonce");
@@ -382,7 +301,7 @@ ZTEST_F(suit_decrypt_filter_tests, test_filter_get_happy_path)
 			"Invalid number of calls to psa_aead_update_ad");
 	zassert_equal_ptr(psa_aead_update_ad_fake.arg1_val, aad,
 			 "Invalid ad passed to psa_aead_update_ad");
-	zassert_equal_ptr(psa_aead_update_ad_fake.arg2_val, strlen(aad),
+	zassert_equal(psa_aead_update_ad_fake.arg2_val, strlen(aad),
 			 "Invalid ad length passed to psa_aead_update_ad");
 	zassert_equal(psa_aead_abort_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_abort");
