@@ -71,6 +71,7 @@ struct suit_decrypt_filter_tests_fixture {
 	size_t decrypted_output_length;
 	psa_status_t aead_update_status;
 	psa_status_t aead_verify_status;
+	suit_plat_err_t ram_sink_write_status;
 
 	// ram_sink interfaces call counters. Not really 'fixtures', but something 
 	// we verify as a side effect of test run. 
@@ -158,7 +159,7 @@ static suit_plat_err_t write_ram(void *ctx, const uint8_t *buf, size_t size)
 
 	tests_fixture.ram_sink_write_call_cnt++;
 
-	return SUIT_PLAT_SUCCESS;
+	return tests_fixture.ram_sink_write_status;
 }
 
 static suit_plat_err_t used_storage(void *ctx, size_t *size)
@@ -462,14 +463,6 @@ ZTEST_F(suit_decrypt_filter_tests, test_flush_verify_fail)
 			"Incorrect number of ram_sink write function calls");
 	zassert_equal(psa_aead_abort_fake.call_count, 1,
 			"Invalid number of calls to psa_aead_abort");
-	// zassert_equal(fixture->dec_sink.ctx->cek_key_id, 0,
-	// 		"Invalid cek_key_id of decrypt stream context");
-	// zassert_equal(fixture->dec_sink.ctx->operation, 0,
-	// 		"Invalid operation of decrypt stream context");
-	// zassert_equal(fixture->dec_sink.ctx->tag_size, 0,
-	// 		"Invalid tag_size of decrypt stream context");
-	// zassert_equal(fixture->dec_sink.ctx->tag_bytes, 0,
-	// 		"Invalid tag_bytes of decrypt stream context");
 }
 
 ZTEST_F(suit_decrypt_filter_tests, test_flush_happy_path)
@@ -506,12 +499,43 @@ ZTEST_F(suit_decrypt_filter_tests, test_flush_happy_path)
 			"Incorrect number of ram_sink write function calls");
 	zassert_equal(psa_aead_abort_fake.call_count, 0,
 			"Invalid number of calls to psa_aead_abort");
-	// zassert_equal(fixture->dec_sink.ctx->cek_key_id, 0,
-	// 		"Invalid cek_key_id of decrypt stream context");
-	// zassert_equal(fixture->dec_sink.ctx->operation, 0,
-	// 		"Invalid operation of decrypt stream context");
-	// zassert_equal(fixture->dec_sink.ctx->tag_size, 0,
-	// 		"Invalid tag_size of decrypt stream context");
-	// zassert_equal(fixture->dec_sink.ctx->tag_bytes, 0,
-	// 		"Invalid tag_bytes of decrypt stream context");
+}
+
+ZTEST_F(suit_decrypt_filter_tests, test_flush_ram_write_fail)
+{
+	struct suit_encryption_info enc_info = ENC_INFO_DEFAULT_INIT;
+
+	suit_plat_decode_key_id_fake.custom_fake = custom_suit_plat_decode_key_id;
+	suit_plat_err_t err = suit_decrypt_filter_get(&fixture->dec_sink, &enc_info, 
+											&sample_class_id, &fixture->ram_sink);
+
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+		    "Incorrect error code when getting decrypt filter");
+
+	psa_aead_update_fake.custom_fake = custom_psa_aead_update;
+	fixture->aead_update_status = PSA_SUCCESS;
+	fixture->decrypted_output_length = 100; // Anything greater than 0.
+
+	err = fixture->dec_sink.write(fixture->dec_sink.ctx, ciphertext_direct, 
+								sizeof(ciphertext_direct));
+	
+	zassert_equal(err, SUIT_PLAT_SUCCESS,
+			"Incorrect error code when calling filter write interface");
+
+	psa_aead_verify_fake.custom_fake = custom_psa_aead_verify;
+	fixture->aead_verify_status = PSA_SUCCESS;
+	fixture->decrypted_output_length = 100; // Anything greater than 0.
+	tests_fixture.ram_sink_write_status = SUIT_PLAT_ERR_NOMEM;
+
+	err = fixture->dec_sink.flush(fixture->dec_sink.ctx);
+
+	zassert_equal(err, SUIT_PLAT_ERR_NOMEM,
+			"Incorrect error code when calling filter flush interface");
+	zassert_equal(fixture->ram_sink_write_call_cnt, 2, // Called 2 times because we
+													   // also call write (< SINGLE_CHUNK_SIZE).
+			"Incorrect number of ram_sink write function calls");
+	zassert_equal(psa_aead_abort_fake.call_count, 0,
+			"Invalid number of calls to psa_aead_abort");
+	zassert_equal(fixture->ram_sink_erase_call_cnt, 1,
+			"Incorrect number of ram_sink erase function calls");
 }
