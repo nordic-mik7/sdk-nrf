@@ -17,6 +17,8 @@ struct decompress_ctx {
 	bool in_use;
 	nrf_compress_implementation *codec_impl;
 	void *codec_ctx;
+	uint8_t last_chunk[2 * LZMA_REQUIRED_INPUT_MAX];
+	uint8_t last_chunk_size;
 };
 
 static struct decompress_ctx ctx;
@@ -82,6 +84,10 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 	size_t chunk_size;
 	int rc;
 	struct decompress_ctx *decompress_ctx = (struct decompress_ctx *)ctx;
+	uint8_t *output = NULL;
+    size_t output_size = 0;
+	uint32_t processed_size = 0;
+	uint8_t first_chunk[2 * LZMA_REQUIRED_INPUT_MAX];
 
 	if ((ctx == NULL) || (buf == NULL) || (size == 0)) {
 		LOG_ERR("Invalid arguments.");
@@ -96,16 +102,22 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 	nrf_compress_implementation *codec_impl;
 	codec_impl = decompress_ctx->codec_impl;
 
-	while (size > 0) {
+	memcpy(first_chunk, decompress_ctx->last_chunk, decompress_ctx->last_chunk_size);
+
+	while (size - LZMA_REQUIRED_INPUT_MAX > 0) {
 		chunk_size = MIN(size,
 			codec_impl->decompress_bytes_needed(decompress_ctx->codec_ctx));
 
 		rc = codec_impl->decompress(decompress_ctx->codec_ctx,
-						buf, chunk_size, last_packet,
-						&offset, &output, &output_size);
+						buf, chunk_size, false,
+						&processed_size, &output, &output_size);
 
-		if (status != PSA_SUCCESS) {
-			LOG_ERR("Failed to decrypt data: %d", status);
+		if (output_size != 0) {
+			/** It means that we reached the end of dictionary buffer,
+			 * which must not happen in our case - we cannot override
+			 * it as it occupies image space.
+			 */
+			LOG_ERR("Too big decompressed image size: %u", output_size);
 			err = SUIT_PLAT_ERR_CRASH;
 			goto cleanup;
 		}
