@@ -17,7 +17,7 @@ extern "C" {
 
 /**
  * @brief Get decompress filter object.
- * WARNING: decompression filter must be last in filter chain
+ * WARNING: decompression filter must be the last in filter chain
  * 	because it needs to have an access to unaltered destination component memory
  *	during streaming.
  *

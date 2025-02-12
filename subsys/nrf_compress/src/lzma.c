@@ -526,15 +526,14 @@ static int lzma_decompress(void *inst, const uint8_t *input, size_t input_size, 
 
 	*offset = chunk_size;
 
-	if (last_part && (status == LZMA_STATUS_FINISHED_WITH_MARK ||
-			  status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK) &&
+	if (last_part && (status == LZMA_STATUS_FINISHED_WITH_MARK) &&
 	    *offset < input_size) {
 		/* If last block, ensure offset matches complete file size */
 		*offset = input_size;
 	}
 
 	if (decoder->dicPos >= decoder->dicHandle->dicBufSize ||
-	    (last_part && input_size == chunk_size)) {
+	    (last_part && input_size == *offset)) {
 #if CONFIG_NRF_COMPRESS_DICTIONARY_CACHE_SIZE > 0
 		if (cache.invalid) {
 			validate_cache(decoder->dicHandle);
