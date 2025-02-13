@@ -20,4 +20,4 @@ zephyr_library_sources_ifdef(CONFIG_SUIT_STREAM_FILTER_DECOMPRESS src/suit_decom
 
 zephyr_library_link_libraries(suit_stream_filters_interface)
 zephyr_library_link_libraries(suit_utils)
-zephyr_library_link_libraries(suit_mci)
+zephyr_library_link_libraries_ifdef(CONFIG_SUIT_STREAM_FILTER_DECRYPT suit_mci)

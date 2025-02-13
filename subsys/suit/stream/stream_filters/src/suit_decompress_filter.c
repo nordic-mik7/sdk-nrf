@@ -12,12 +12,12 @@
 
 LOG_MODULE_REGISTER(suit_decompress_filter, CONFIG_SUIT_LOG_LEVEL);
 
-#define CHUNK_BUFFER_SIZE LZMA_REQUIRED_INPUT_MAX
+#define CHUNK_BUFFER_SIZE 20 // the same as LZMA_REQUIRED_INPUT_MAX
 
 struct decompress_ctx {
 	const struct stream_sink *out_sink;
 	bool in_use;
-	const nrf_compress_implementation *codec_impl;
+	const struct nrf_compress_implementation *codec_impl;
 	const void *codec_ctx;
 	uint8_t last_chunk[CHUNK_BUFFER_SIZE];
 	uint8_t last_chunk_size;
@@ -33,7 +33,7 @@ static int close_dictionary(void);
 static size_t write_dictionary(size_t pos, const uint8_t *data, size_t len);
 static size_t read_dictionary(size_t pos, uint8_t *data, size_t len);
 
-static const lzma_dictionary_interface lzma_if {
+static const lzma_dictionary_interface lzma_if = {
 	.open = open_dictionary,
 	.close = close_dictionary,
 	.write = write_dictionary,
@@ -65,6 +65,7 @@ static void zeroize(void *buf, size_t len)
 
 static int open_dictionary(size_t dict_size, size_t *buff_size)
 {
+	LOG_ERR("Opening dictionary with requested size: %d", dict_size);
 	return 0;
 }
 static int close_dictionary(void)
@@ -87,8 +88,9 @@ static suit_plat_err_t erase(void *ctx)
 	if (ctx != NULL) {
 		struct decompress_ctx *decompress_ctx = (struct decompress_ctx *)ctx;
 
-		if (decompress_ctx->out_sink.erase != NULL) {
-			res = decompress_ctx->out_sink.erase(decompress_ctx->out_sink.ctx);
+		if (decompress_ctx->out_sink->erase != NULL) {
+			LOG_ERR("WTF2");
+			res = decompress_ctx->out_sink->erase(decompress_ctx->out_sink->ctx);
 		}
 	} else {
 		res = SUIT_PLAT_ERR_INVAL;
@@ -106,7 +108,7 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 	uint8_t *output = NULL;
     size_t output_size = 0;
 	uint32_t processed_size = 0;
-	nrf_compress_implementation *codec_impl;
+	const struct nrf_compress_implementation *codec_impl;
 
 	if ((ctx == NULL) || (buf == NULL) || (size == 0)) {
 		LOG_ERR("Invalid arguments.");
@@ -121,13 +123,15 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 	codec_impl = decompress_ctx->codec_impl;
 
 	while (size + decompress_ctx->last_chunk_size > CHUNK_BUFFER_SIZE) {
-		/** Make sure we leave CHUNK_BUFFER_SIZE bytes
-		 *  in ctx.last_chunk for the flush operation. */
+		/* Make sure we buffer CHUNK_BUFFER_SIZE bytes
+		 * in ctx.last_chunk for the flush operation. */
 
-		if (decompress_ctx->last_chunk_size != 0) {
+		if (decompress_ctx->last_chunk_size >= CHUNK_BUFFER_SIZE) {
 
-			rc = codec_impl->decompress(decompress_ctx->codec_ctx,
-					decompress_ctx->last_chunk, decompress_ctx->last_chunk_size,
+			chunk_size = MIN(CHUNK_BUFFER_SIZE, size);
+
+			rc = codec_impl->decompress((void *)decompress_ctx->codec_ctx,
+					decompress_ctx->last_chunk, chunk_size,
 					false, &processed_size, &output, &output_size);
 
 			if (rc != 0) {
@@ -137,8 +141,8 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 			}
 
 			if (output_size != 0
-			   || processed_size != decompress_ctx->last_chunk_size) {
-				/** It means that we reached the end of dictionary buffer,
+			   || processed_size != chunk_size) {
+				/* It means that we reached the end of dictionary buffer,
 				 * which must not happen in our case - we cannot override
 				 * it as it occupies image space.
 				 */
@@ -147,14 +151,14 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 				goto cleanup;
 			}
 
-			decompress_ctx->last_chunk_size = 0;
+			decompress_ctx->last_chunk_size -= chunk_size;
 			continue;
 		}
 
 		chunk_size = MIN(size - CHUNK_BUFFER_SIZE,
-			codec_impl->decompress_bytes_needed(decompress_ctx->codec_ctx));
+			codec_impl->decompress_bytes_needed((void *)decompress_ctx->codec_ctx));
 
-		rc = codec_impl->decompress(decompress_ctx->codec_ctx,
+		rc = codec_impl->decompress((void *)decompress_ctx->codec_ctx,
 						buf, chunk_size, false,
 						&processed_size, &output, &output_size);
 
@@ -179,7 +183,7 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 	}
 
 	memcpy(decompress_ctx->last_chunk + decompress_ctx->last_chunk_size, buf, size);
-
+	decompress_ctx->last_chunk_size += size;
 	return res;
 
 cleanup:
@@ -197,7 +201,7 @@ static suit_plat_err_t flush(void *ctx)
 	uint8_t *output = NULL;
     size_t output_size = 0;
 	uint32_t processed_size = 0;
-	nrf_compress_implementation *codec_impl;
+	const struct nrf_compress_implementation *codec_impl;
 
 	struct decompress_ctx *decompress_ctx = (struct decompress_ctx *)ctx;
 
@@ -213,17 +217,17 @@ static suit_plat_err_t flush(void *ctx)
 		return SUIT_PLAT_ERR_INVAL;
 	}
 
-	if (decompress_ctx->last_chunk_size = 0) {
-		LOG_WARN("Wrong decompression state.");
+	if (decompress_ctx->last_chunk_size == 0) {
+		LOG_WRN("Wrong decompression state.");
 		res = SUIT_PLAT_ERR_INCORRECT_STATE;
 	}
 
-	while (decompress_ctx->last_chunk_size != 0) {
-		size_t const chunk_size = MIN(decompress_ctx->last_chunk_size,
-			codec_impl->decompress_bytes_needed(decompress_ctx->codec_ctx));
+	while (decompress_ctx->last_chunk_size > 0) {
+		chunk_size = MIN(decompress_ctx->last_chunk_size,
+			codec_impl->decompress_bytes_needed((void *)decompress_ctx->codec_ctx));
 
-		rc = codec_impl->decompress(decompress_ctx->codec_ctx,
-						buf, chunk_size, true,
+		rc = codec_impl->decompress((void *)decompress_ctx->codec_ctx,
+						decompress_ctx->last_chunk, chunk_size, true,
 						&processed_size, &output, &output_size);
 
 		if (rc != 0) {
@@ -250,7 +254,8 @@ static suit_plat_err_t flush(void *ctx)
 		erase(decompress_ctx);
 	}
 
-	rc = codec_impl->reset(decompress_ctx->codec_ctx);
+	LOG_ERR("WTF");
+	rc = codec_impl->reset((void *)decompress_ctx->codec_ctx);
 	zeroize(decompress_ctx->last_chunk, sizeof(decompress_ctx->last_chunk));
 
 	return res;
@@ -259,7 +264,7 @@ static suit_plat_err_t flush(void *ctx)
 static suit_plat_err_t release(void *ctx)
 {
 	struct decompress_ctx *decompress_ctx = (struct decompress_ctx *)ctx;
-	nrf_compress_implementation *codec_impl;
+	const struct nrf_compress_implementation *codec_impl;
 
 	if (ctx == NULL) {
 		LOG_ERR("Invalid arguments - decompress ctx is NULL");
@@ -270,16 +275,16 @@ static suit_plat_err_t release(void *ctx)
 
 	suit_plat_err_t res = flush(ctx);
 
-	if (decompress_ctx->out_sink.release != NULL) {
+	if (decompress_ctx->out_sink->release != NULL) {
 		suit_plat_err_t release_ret =
-			decompress_ctx->out_sink.release(decompress_ctx->out_sink.ctx);
+			decompress_ctx->out_sink->release(decompress_ctx->out_sink->ctx);
 
 		if (res == SUIT_SUCCESS) {
 			res = release_ret;
 		}
 	}
 
-	codec_impl->deinit(decompress_ctx->codec_ctx);
+	codec_impl->deinit((void *)decompress_ctx->codec_ctx);
 	zeroize(decompress_ctx, sizeof(struct decompress_ctx));
 
 	return res;
@@ -294,8 +299,8 @@ static suit_plat_err_t used_storage(void *ctx, size_t *size)
 		return SUIT_PLAT_ERR_INVAL;
 	}
 
-	if (decompress_ctx->out_sink.used_storage != NULL) {
-		return decompress_ctx->out_sink.used_storage(decompress_ctx->out_sink.ctx, size);
+	if (decompress_ctx->out_sink->used_storage != NULL) {
+		return decompress_ctx->out_sink->used_storage(decompress_ctx->out_sink->ctx, size);
 	}
 
 	return SUIT_PLAT_ERR_UNSUPPORTED;
@@ -303,13 +308,13 @@ static suit_plat_err_t used_storage(void *ctx, size_t *size)
 
 static suit_plat_err_t validate_decompression(const struct suit_compression_info *compress_info,
 						   const suit_manifest_class_id_t *class_id,
-						   nrf_compress_types *compress_type)
+						   enum nrf_compress_types *compress_type)
 {
 	switch(compress_info->compression_alg_id)
 	{
 		case suit_lzma2:
 			/** Perform the validation of class_id ?*/
-			compress_type = NRF_COMPRESS_TYPE_LZMA;
+			*compress_type = NRF_COMPRESS_TYPE_LZMA;
 			ctx.codec_ctx = &lzma_inst;
 			break;
 		default:
@@ -340,7 +345,7 @@ suit_plat_err_t suit_decompress_filter_get(struct stream_sink *in_sink,
 
 	ctx.in_use = true;
 
-	enum nrf_compress_types compress_type;
+	enum nrf_compress_types compress_type = NRF_COMPRESS_TYPE_COUNT;
 
 	ret = validate_decompression(compress_info, class_id, &compress_type);
 
@@ -357,7 +362,7 @@ suit_plat_err_t suit_decompress_filter_get(struct stream_sink *in_sink,
 		return SUIT_PLAT_ERR_CRASH;
 	}
 
-	rc = codec_impl->init(ctx.codec_ctx);
+	rc = ctx.codec_impl->init((void *)ctx.codec_ctx);
 
 	if (rc != 0) {
 		LOG_ERR("Failed to initialize lzma codec");

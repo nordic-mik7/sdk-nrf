@@ -513,10 +513,10 @@ static int lzma_decompress(void *inst, const uint8_t *input, size_t input_size, 
 	}
 
 #ifdef CONFIG_NRF_COMPRESS_LZMA_VERSION_LZMA2
-	rc = Lzma2Dec_DecodeToDic(&lzma_decoder, decoder->dicHandle.dicBufSize, input, &chunk_size,
+	rc = Lzma2Dec_DecodeToDic(&lzma_decoder, decoder->dicHandle->dicBufSize, input, &chunk_size,
 					LZMA_FINISH_ANY, &status);
 #else
-	rc = LzmaDec_DecodeToDic(&lzma_decoder, decoder->dicHandle.dicBufSize, input, &chunk_size,
+	rc = LzmaDec_DecodeToDic(&lzma_decoder, decoder->dicHandle->dicBufSize, input, &chunk_size,
 					LZMA_FINISH_ANY, &status);
 #endif
 	if (rc) {
