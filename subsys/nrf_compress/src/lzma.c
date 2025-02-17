@@ -140,6 +140,8 @@ typedef struct dict_cache_t {
 	SizeT dict_pos_begin;
 	/** Indicates which dictionary element is stored as last element of @a data. */
 	SizeT dict_pos_end;
+	/** Write offset, for keeping track on invalidated bytes. */
+	SizeT write_offset;
 	/** Cache invalidation flag - if set, it is out of sync with external dictionary. */
 	bool invalid;
 } dict_cache;
@@ -166,9 +168,11 @@ static CLzmaDec lzma_decoder;
  */
 static void validate_cache(const DictHandle *handle)
 {
-	SizeT const dict_write_size = cache.dict_pos_end - cache.dict_pos_begin + 1;
+	SizeT const dict_write_size = cache.write_offset;
 
 	ext_dict->write(cache.dict_pos_begin, cache.data, dict_write_size);
+
+	cache.write_offset = 0;
 
 	cache.dict_pos_begin = cache.dict_pos_end + 1;
 
@@ -309,7 +313,6 @@ static int lzma_reset(void *inst)
 static size_t lzma_bytes_needed(void *inst)
 {
 	int const arg_check_rc = check_inst(inst);
-
 	if (arg_check_rc)
 		return arg_check_rc;
 
@@ -479,6 +482,7 @@ static int lzma_decompress(void *inst, const uint8_t *input, size_t input_size, 
 #endif
 
 		if (rc) {
+			LOG_ERR("allocateProvs failed, rc = %d", rc);
 			rc = -EINVAL;
 			goto done;
 		}
@@ -520,6 +524,7 @@ static int lzma_decompress(void *inst, const uint8_t *input, size_t input_size, 
 					LZMA_FINISH_ANY, &status);
 #endif
 	if (rc) {
+		LOG_ERR("decodeToDic failed, rc = %d", rc);
 		rc = -EINVAL;
 		goto done;
 	}
@@ -570,6 +575,7 @@ DictHandle *LzmaDictionaryOpen(SizeT size)
 #if CONFIG_NRF_COMPRESS_DICTIONARY_CACHE_SIZE > 0
 	cache.dict_pos_begin = 0;
 	cache.dict_pos_end = sizeof(cache.data) - 1;
+	cache.write_offset = 0;
 #endif
 
 	return &dict_handle;
@@ -596,24 +602,23 @@ SizeT LzmaDictionaryWrite(DictHandle *handle, SizeT pos, const Byte *data, SizeT
 	}
 
 	SizeT bytes_written = 0;
-	SizeT cache_pos = pos - cache.dict_pos_begin;
+	// SizeT cache_pos = pos - cache.dict_pos_begin;
 
 	while (bytes_written != write_len) {
 		SizeT cache_write_len =
-			(write_len - bytes_written) > (sizeof(cache.data) - cache_pos) ?
-				(sizeof(cache.data) - cache_pos) :
+			(write_len - bytes_written) > (sizeof(cache.data) - cache.write_offset) ?
+				(sizeof(cache.data) - cache.write_offset) :
 				(write_len - bytes_written);
 
-		memcpy(cache.data + cache_pos, data + bytes_written, cache_write_len);
+		memcpy(cache.data + cache.write_offset, data + bytes_written, cache_write_len);
 		cache.invalid = true;
 
 		bytes_written += cache_write_len;
-		cache_pos += cache_write_len;
+		cache.write_offset += cache_write_len;
 
-		if (cache_pos == sizeof(cache.data)) {
+		if (cache.write_offset == sizeof(cache.data)) {
 			/** Cache full, validate it.*/
 			validate_cache(handle);
-			cache_pos = 0;
 		}
 	}
 #else

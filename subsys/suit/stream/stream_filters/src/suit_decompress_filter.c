@@ -12,15 +12,18 @@
 
 LOG_MODULE_REGISTER(suit_decompress_filter, CONFIG_SUIT_LOG_LEVEL);
 
-#define CHUNK_BUFFER_SIZE 20 // the same as LZMA_REQUIRED_INPUT_MAX
+#define SUIT_LZMA2_HEADER_LENGTH 2
+#define SUIT_LZMA2_REQUIRED_INPUT_MAX 20 // the same as LZMA_REQUIRED_INPUT_MAX
+#define CHUNK_BUFFER_SIZE (SUIT_LZMA2_HEADER_LENGTH + SUIT_LZMA2_REQUIRED_INPUT_MAX)
 
 struct decompress_ctx {
-	const struct stream_sink *out_sink;
+	struct stream_sink out_sink;
 	bool in_use;
 	const struct nrf_compress_implementation *codec_impl;
 	const void *codec_ctx;
 	uint8_t last_chunk[CHUNK_BUFFER_SIZE];
 	uint8_t last_chunk_size;
+	size_t curr_image_offset;
 };
 
 static struct decompress_ctx ctx;
@@ -65,20 +68,51 @@ static void zeroize(void *buf, size_t len)
 
 static int open_dictionary(size_t dict_size, size_t *buff_size)
 {
+	suit_plat_err_t res = SUIT_PLAT_SUCCESS;
+
 	LOG_ERR("Opening dictionary with requested size: %d", dict_size);
-	return 0;
+
+	res = ctx.out_sink.get_size(ctx.out_sink.ctx, buff_size);
+
+	if(res == SUIT_PLAT_SUCCESS && *buff_size < dict_size) {
+		res = -ENOMEM;
+		LOG_ERR("Opening dictionary failed, available size: %d", *buff_size);
+	}
+
+	LOG_ERR("Available size: %d", *buff_size);
+
+	return res == SUIT_PLAT_SUCCESS ? 0 : -EIO;
 }
+
 static int close_dictionary(void)
 {
 	return 0;
 }
+
 static size_t write_dictionary(size_t pos, const uint8_t *data, size_t len)
 {
-	return len;
+	suit_plat_err_t res = SUIT_PLAT_SUCCESS;
+
+	if (ctx.curr_image_offset != pos) {
+		res = ctx.out_sink.seek(ctx.out_sink.ctx, ctx.curr_image_offset);
+		LOG_ERR("image_offset != pos!");
+		if (res != SUIT_PLAT_SUCCESS) {
+			return 0;
+		}
+	}
+
+	res = ctx.out_sink.write(ctx.out_sink.ctx, data, len);
+	ctx.curr_image_offset += len;
+	return res == SUIT_PLAT_SUCCESS ? len : 0;
 }
+
 static size_t read_dictionary(size_t pos, uint8_t *data, size_t len)
 {
-	return len;
+	suit_plat_err_t res = SUIT_PLAT_SUCCESS;
+
+	res = ctx.out_sink.readback(ctx.out_sink.ctx, pos, data, len);
+
+	return res == SUIT_PLAT_SUCCESS ? len : 0;
 }
 
 static suit_plat_err_t erase(void *ctx)
@@ -88,9 +122,8 @@ static suit_plat_err_t erase(void *ctx)
 	if (ctx != NULL) {
 		struct decompress_ctx *decompress_ctx = (struct decompress_ctx *)ctx;
 
-		if (decompress_ctx->out_sink->erase != NULL) {
-			LOG_ERR("WTF2");
-			res = decompress_ctx->out_sink->erase(decompress_ctx->out_sink->ctx);
+		if (decompress_ctx->out_sink.erase != NULL) {
+			res = decompress_ctx->out_sink.erase(decompress_ctx->out_sink.ctx);
 		}
 	} else {
 		res = SUIT_PLAT_ERR_INVAL;
@@ -122,20 +155,22 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 
 	codec_impl = decompress_ctx->codec_impl;
 
+	LOG_ERR("Write called");
 	while (size + decompress_ctx->last_chunk_size > CHUNK_BUFFER_SIZE) {
 		/* Make sure we buffer CHUNK_BUFFER_SIZE bytes
 		 * in ctx.last_chunk for the flush operation. */
 
-		if (decompress_ctx->last_chunk_size >= CHUNK_BUFFER_SIZE) {
+		if (decompress_ctx->last_chunk_size != 0) {
 
-			chunk_size = MIN(CHUNK_BUFFER_SIZE, size);
+			chunk_size = MIN(decompress_ctx->last_chunk_size,
+				size + decompress_ctx->last_chunk_size - CHUNK_BUFFER_SIZE);
 
 			rc = codec_impl->decompress((void *)decompress_ctx->codec_ctx,
 					decompress_ctx->last_chunk, chunk_size,
 					false, &processed_size, &output, &output_size);
 
 			if (rc != 0) {
-				LOG_ERR("Decompression data error");
+				LOG_ERR("Decompression data error on line: %d, rc = %d", __LINE__, rc);
 				res = SUIT_PLAT_ERR_CRASH;
 				goto cleanup;
 			}
@@ -163,7 +198,7 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 						&processed_size, &output, &output_size);
 
 		if (rc != 0) {
-			LOG_ERR("Decompression data error");
+			LOG_ERR("Decompression data error on line: %d, rc = %d", __LINE__, rc);
 			res = SUIT_PLAT_ERR_CRASH;
 			goto cleanup;
 		}
@@ -187,8 +222,9 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size)
 	return res;
 
 cleanup:
-	/* Clear the RAM buffer so that no image data is stored in unwanted places */
-	zeroize(decompress_ctx->last_chunk, sizeof(decompress_ctx->last_chunk));
+// 	/* Clear the RAM buffer so that no image data is stored in unwanted places */
+// 	zeroize(decompress_ctx->last_chunk, sizeof(decompress_ctx->last_chunk));
+//  decompress_ctx->last_chunk_size = 0;
 
 	return res;
 }
@@ -218,11 +254,17 @@ static suit_plat_err_t flush(void *ctx)
 	}
 
 	if (decompress_ctx->last_chunk_size == 0) {
+		LOG_INF("Decompress filter already flushed.");
+		return SUIT_PLAT_SUCCESS;
+	}
+
+	if (decompress_ctx->last_chunk_size < CHUNK_BUFFER_SIZE) {
 		LOG_WRN("Wrong decompression state.");
 		res = SUIT_PLAT_ERR_INCORRECT_STATE;
 	}
 
-	while (decompress_ctx->last_chunk_size > 0) {
+	LOG_ERR("Flush called");
+	while (decompress_ctx->last_chunk_size > 0 && res == SUIT_PLAT_SUCCESS) {
 		chunk_size = MIN(decompress_ctx->last_chunk_size,
 			codec_impl->decompress_bytes_needed((void *)decompress_ctx->codec_ctx));
 
@@ -248,14 +290,21 @@ static suit_plat_err_t flush(void *ctx)
 		decompress_ctx->last_chunk_size -= processed_size;
 	}
 
+	rc = codec_impl->reset((void *)decompress_ctx->codec_ctx);
+
 	if (res == 0) {
 		LOG_INF("Firmware decompression successful");
-	} else {
+		if (decompress_ctx->out_sink.flush != NULL) {
+			decompress_ctx->out_sink.flush(decompress_ctx->out_sink.ctx);
+		}
+	} else if (res == SUIT_PLAT_ERR_CRASH) {
 		erase(decompress_ctx);
+	} else {
+		/* For res == SUIT_PLAT_ERR_INCORRECT_STATE avoid erasing flash as
+		 * we didn't write anything to it yet.
+		 */
 	}
 
-	LOG_ERR("WTF");
-	rc = codec_impl->reset((void *)decompress_ctx->codec_ctx);
 	zeroize(decompress_ctx->last_chunk, sizeof(decompress_ctx->last_chunk));
 
 	return res;
@@ -275,9 +324,9 @@ static suit_plat_err_t release(void *ctx)
 
 	suit_plat_err_t res = flush(ctx);
 
-	if (decompress_ctx->out_sink->release != NULL) {
+	if (decompress_ctx->out_sink.release != NULL) {
 		suit_plat_err_t release_ret =
-			decompress_ctx->out_sink->release(decompress_ctx->out_sink->ctx);
+			decompress_ctx->out_sink.release(decompress_ctx->out_sink.ctx);
 
 		if (res == SUIT_SUCCESS) {
 			res = release_ret;
@@ -299,8 +348,8 @@ static suit_plat_err_t used_storage(void *ctx, size_t *size)
 		return SUIT_PLAT_ERR_INVAL;
 	}
 
-	if (decompress_ctx->out_sink->used_storage != NULL) {
-		return decompress_ctx->out_sink->used_storage(decompress_ctx->out_sink->ctx, size);
+	if (decompress_ctx->out_sink.used_storage != NULL) {
+		return decompress_ctx->out_sink.used_storage(decompress_ctx->out_sink.ctx, size);
 	}
 
 	return SUIT_PLAT_ERR_UNSUPPORTED;
@@ -338,8 +387,9 @@ suit_plat_err_t suit_decompress_filter_get(struct stream_sink *in_sink,
 		return SUIT_PLAT_ERR_BUSY;
 	}
 
-	if ((compress_info == NULL) || (out_sink == NULL) || (in_sink == NULL) ||
-	    (out_sink->write == NULL) || class_id == NULL) {
+	if (compress_info == NULL || out_sink == NULL || in_sink == NULL ||
+	    class_id == NULL || out_sink->write == NULL || out_sink->readback == NULL ||
+		out_sink->get_size == NULL) {
 		return SUIT_PLAT_ERR_INVAL;
 	}
 
@@ -372,7 +422,6 @@ suit_plat_err_t suit_decompress_filter_get(struct stream_sink *in_sink,
 		return SUIT_PLAT_ERR_CRASH;
 	}
 
-	ctx.out_sink = out_sink;
 	memcpy(&ctx.out_sink, out_sink, sizeof(struct stream_sink));
 
 	in_sink->ctx = &ctx;
@@ -390,6 +439,8 @@ suit_plat_err_t suit_decompress_filter_get(struct stream_sink *in_sink,
 
 	/* Seeking is not possible on compressed payload. */
 	in_sink->seek = NULL;
+
+	LOG_ERR("succssfuly got filter");
 
 	return SUIT_PLAT_SUCCESS;
 }
