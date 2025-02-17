@@ -1,7 +1,7 @@
 tests:
   suit.integration.decrypt_filter:
     platform_allow:
-      - nrf52840dk/nrf52840
+      - nrf54h20dk/nrf54h20/cpuapp
       - native_sim
       - native_sim/native/64
     tags:
@@ -9,5 +9,4 @@ tests:
       - suit_decompress_filter
       - ci_tests_subsys_suit
     integration_platforms:
-      - nrf52840dk/nrf52840
       - native_sim
