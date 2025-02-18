@@ -12,7 +12,7 @@
 
 		/* Use the last 32KB of NVM as dfu_partition. */
 		dfu_partition: partition@f8000 {
-			reg = <0xf8000 DT_SIZE_K(128)>;
+			reg = <0xf8000 DT_SIZE_K(32)>;
 		};
 	};
 };
