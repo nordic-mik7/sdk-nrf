@@ -1,5 +1,5 @@
 tests:
-  suit.integration.decrypt_filter:
+  suit.integration.decompress_filter:
     platform_allow:
       - native_sim
       - native_sim/native/64

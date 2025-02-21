@@ -20,8 +20,6 @@ static suit_plat_err_t write(void *ctx, const uint8_t *buf, size_t size);
 static suit_plat_err_t seek(void *ctx, size_t offset);
 static suit_plat_err_t used_storage(void *ctx, size_t *size);
 static suit_plat_err_t release(void *ctx);
-static suit_plat_err_t readback(void *ctx, size_t offset, uint8_t *buf, size_t size);
-static suit_plat_err_t get_size(void *ctx, size_t *size);
 
 struct ram_ctx {
 	size_t size_used;
@@ -83,8 +81,6 @@ suit_plat_err_t suit_ram_sink_get(struct stream_sink *sink, uint8_t *dst, size_t
 			sink->flush = NULL;
 			sink->used_storage = used_storage;
 			sink->release = release;
-			sink->readback = readback;
-			sink->get_size = get_size;
 			sink->ctx = ctx;
 
 			return SUIT_PLAT_SUCCESS; /* SUCCESS */
@@ -176,10 +172,23 @@ static suit_plat_err_t release(void *ctx)
 	return SUIT_PLAT_ERR_INVAL;
 }
 
-static suit_plat_err_t readback(void *ctx, size_t offset, uint8_t *buf, size_t size)
+suit_plat_err_t suit_ram_sink_readback(void *sink_ctx, size_t offset, uint8_t *buf, size_t size)
 {
-	if ((ctx != NULL) && (buf != NULL) && (size > 0)) {
-		struct ram_ctx *ram_ctx = (struct ram_ctx *)ctx;
+	if ((sink_ctx != NULL) && (buf != NULL) && (size > 0)) {
+		struct ram_ctx *ram_ctx = (struct ram_ctx *)sink_ctx;
+
+		bool ctx_found = false;
+		for (int i = 0; i < SUIT_MAX_RAM_COMPONENTS; i++) {
+			if (ram_ctx == &ctx[i]) {
+				ctx_found = true;
+				break;
+			}
+		}
+
+		if (ctx_found == false) {
+			LOG_ERR("readback with invalid sink_ctx called.");
+			return SUIT_PLAT_ERR_INVAL;
+		}
 
 		if ((ram_ctx->offset_limit - (size_t)ram_ctx->ptr + offset) >= size) {
 			uint8_t *dst = (uint8_t *)suit_memory_global_address_to_ram_address(
@@ -196,20 +205,6 @@ static suit_plat_err_t readback(void *ctx, size_t offset, uint8_t *buf, size_t s
 
 		LOG_ERR("Read out of bounds.");
 		return SUIT_PLAT_ERR_OUT_OF_BOUNDS;
-	}
-
-	LOG_ERR("Invalid arguments.");
-	return SUIT_PLAT_ERR_INVAL;
-}
-
-static suit_plat_err_t get_size(void *ctx, size_t *size)
-{
-	if ((ctx != NULL) && (size != NULL)) {
-		struct ram_ctx *ram_ctx = (struct ram_ctx *)ctx;
-
-		*size = ram_ctx->offset_limit - (size_t)ram_ctx->ptr;
-
-		return SUIT_PLAT_SUCCESS;
 	}
 
 	LOG_ERR("Invalid arguments.");

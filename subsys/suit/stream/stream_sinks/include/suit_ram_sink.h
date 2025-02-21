@@ -32,6 +32,18 @@ suit_plat_err_t suit_ram_sink_get(struct stream_sink *sink, uint8_t *dst, size_t
  */
 bool suit_ram_sink_is_address_supported(uint8_t *address);
 
+/**
+ * @brief Read data from the ram sink. It is an additional interface, not a part
+ * of the stream_sink API. User that holds the ram_sink can readback the data during
+ * streaming, as ram_sink has the access to data destination in memory.
+ *
+ * @param ctx context of the ram_sink
+ * @param offset Offset of ram_sink area to start reading from
+ * @param buf Buffer to read into
+ * @param size size of @a buf; data read size
+ */
+suit_plat_err_t suit_ram_sink_readback(void *sink_ctx, size_t offset, uint8_t *buf, size_t size);
+
 #ifdef __cplusplus
 }
 #endif

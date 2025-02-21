@@ -25,8 +25,6 @@ static suit_plat_err_t seek(void *ctx, size_t offset);
 static suit_plat_err_t flush(void *ctx);
 static suit_plat_err_t used_storage(void *ctx, size_t *size);
 static suit_plat_err_t release(void *ctx);
-static suit_plat_err_t readback(void *ctx, size_t offset, uint8_t *buf, size_t size);
-static suit_plat_err_t get_size(void *ctx, size_t *size);
 
 struct flash_ctx {
 	size_t size_used;
@@ -167,8 +165,6 @@ suit_plat_err_t suit_flash_sink_get(struct stream_sink *sink, uint8_t *dst, size
 			sink->flush = flush;
 			sink->used_storage = used_storage;
 			sink->release = release;
-			sink->readback = readback;
-			sink->get_size = get_size;
 			sink->ctx = ctx;
 
 			return SUIT_PLAT_SUCCESS; /* SUCCESS */
@@ -439,10 +435,23 @@ static suit_plat_err_t release(void *ctx)
 	return SUIT_PLAT_ERR_INVAL;
 }
 
-static suit_plat_err_t readback(void *ctx, size_t offset, uint8_t *buf, size_t size)
+suit_plat_err_t suit_flash_sink_readback(void *sink_ctx, size_t offset, uint8_t *buf, size_t size)
 {
-	if ((ctx != NULL) && (buf != NULL) && (size > 0)) {
-		struct flash_ctx *flash_ctx = (struct flash_ctx *)ctx;
+	if ((sink_ctx != NULL) && (buf != NULL) && (size > 0)) {
+		struct flash_ctx *flash_ctx = (struct flash_ctx *)sink_ctx;
+
+		bool ctx_found = false;
+		for (int i = 0; i < SUIT_MAX_FLASH_COMPONENTS; i++) {
+			if (flash_ctx == &ctx[i]) {
+				ctx_found = true;
+				break;
+			}
+		}
+
+		if (ctx_found == false) {
+			LOG_ERR("readback with invalid sink_ctx called.");
+			return SUIT_PLAT_ERR_INVAL;
+		}
 
 		if (!flash_ctx->in_use) {
 			LOG_ERR("flash_sink not initialized.");
@@ -462,30 +471,7 @@ static suit_plat_err_t readback(void *ctx, size_t offset, uint8_t *buf, size_t s
 		return SUIT_PLAT_SUCCESS;
 	}
 
-	LOG_ERR("%s: Invalid arguments. %s, %s, %s", __func__, IS_COND_TRUE(ctx != NULL),
+	LOG_ERR("%s: Invalid arguments. %s, %s, %s", __func__, IS_COND_TRUE(sink_ctx != NULL),
 		IS_COND_TRUE(buf != NULL), IS_COND_TRUE(size > 0));
-	return SUIT_PLAT_ERR_INVAL;
-}
-
-static suit_plat_err_t get_size(void *ctx, size_t *size)
-{
-	if ((ctx != NULL)) {
-		struct flash_ctx *flash_ctx = (struct flash_ctx *)ctx;
-
-		if (!flash_ctx->in_use) {
-			LOG_ERR("flash_sink not initialized.");
-			return SUIT_PLAT_ERR_INVAL;
-		}
-
-		if (flash_ctx->fdev == NULL) {
-			LOG_ERR("%s: fdev is NULL.", __func__);
-			return SUIT_PLAT_ERR_INVAL;
-		}
-
-		*size = flash_ctx->offset_limit - (size_t)flash_ctx->ptr;
-		return SUIT_PLAT_SUCCESS;
-	}
-
-	LOG_ERR("%s: Invalid arguments. %s", __func__, IS_COND_TRUE(ctx != NULL));
 	return SUIT_PLAT_ERR_INVAL;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Nordic Semiconductor ASA
+ * Copyright (c) 2025 Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
  */
@@ -10,9 +10,9 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 
-		/* Use the last 32KB of NVM as dfu_partition. */
-		dfu_partition: partition@f8000 {
-			reg = <0xf8000 DT_SIZE_K(32)>;
+		/* Use the last 128KB of NVM as image storage partition. */
+		cpuapp_slot0_partition: partition@f8000 {
+			reg = <0xf8000 DT_SIZE_K(128)>;
 		};
 	};
 };

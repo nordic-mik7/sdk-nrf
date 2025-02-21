@@ -21,8 +21,6 @@ typedef suit_plat_err_t (*seek_ptr)(void *ctx, size_t offset);
 typedef suit_plat_err_t (*flush_ptr)(void *ctx);
 typedef suit_plat_err_t (*used_storage_ptr)(void *ctx, size_t *size);
 typedef suit_plat_err_t (*release_ptr)(void *ctx);
-typedef suit_plat_err_t (*readback_ptr)(void *ctx, size_t offset, uint8_t *buf, size_t size);
-typedef suit_plat_err_t (*get_size_ptr)(void *ctx, size_t *size);
 
 /**
  * @brief Structure represents node that is a target for data.
@@ -38,8 +36,6 @@ struct stream_sink {
 	flush_ptr flush;
 	used_storage_ptr used_storage;
 	release_ptr release;
-	readback_ptr readback;
-	get_size_ptr get_size;
 
 	void *ctx; /* context used by specific sink implementation */
 };
