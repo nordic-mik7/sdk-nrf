@@ -427,6 +427,10 @@ static int lzma_decompress(void *inst, const uint8_t *input, size_t input_size, 
 		return 0;
 	}
 
+	if (last_part) {
+		LOG_ERR("last part BEFORE, dicPos = %d",
+		lzma_decoder.decoder.dicPos);
+	}
 #ifdef CONFIG_NRF_COMPRESS_LZMA_VERSION_LZMA2
 	rc = Lzma2Dec_DecodeToDic(&lzma_decoder, MAX_LZMA_DICT_SIZE, input, &chunk_size,
 					(last_part ? LZMA_FINISH_END : LZMA_FINISH_ANY), &status);
@@ -435,6 +439,10 @@ static int lzma_decompress(void *inst, const uint8_t *input, size_t input_size, 
 					(last_part ? LZMA_FINISH_END : LZMA_FINISH_ANY), &status);
 #endif
 
+	if (last_part) {
+		LOG_ERR("last part, rc = %d, status = %d, dicPos = %d", rc, status,
+		lzma_decoder.decoder.dicPos);
+	}
 	if (rc) {
 		rc = -EINVAL;
 		goto done;

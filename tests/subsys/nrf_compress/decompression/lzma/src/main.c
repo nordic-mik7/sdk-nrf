@@ -18,13 +18,20 @@ const uint8_t dummy_data_input[] = {
 #include "dummy_data_input.inc"
 };
 
-/* File size and sha256 hash of decompressed data */
-const uint32_t dummy_data_output_size = 66477;
+// /* File size and sha256 hash of decompressed data */
+// const uint32_t dummy_data_output_size = 66477;
+// const uint8_t dummy_data_output_sha256[] = {
+// 	0x87, 0xee, 0x2e, 0x17, 0xa5, 0xdb, 0x98, 0xbe,
+// 	0x8c, 0xcb, 0xfe, 0xc9, 0x70, 0x8c, 0x7a, 0x43,
+// 	0x66, 0xda, 0x63, 0xff, 0x48, 0x15, 0x48, 0x88,
+// 	0xd7, 0xed, 0x64, 0x87, 0xba, 0xb9, 0xef, 0xc5
+// };
+
+const uint32_t dummy_data_output_size = 192061;
 const uint8_t dummy_data_output_sha256[] = {
-	0x87, 0xee, 0x2e, 0x17, 0xa5, 0xdb, 0x98, 0xbe,
-	0x8c, 0xcb, 0xfe, 0xc9, 0x70, 0x8c, 0x7a, 0x43,
-	0x66, 0xda, 0x63, 0xff, 0x48, 0x15, 0x48, 0x88,
-	0xd7, 0xed, 0x64, 0x87, 0xba, 0xb9, 0xef, 0xc5
+0xa1, 0x2e, 0x51, 0xc0, 0x08, 0x8d, 0xb5, 0x8e, 0x5b, 0xb8, 0x00, 0x2a, 0xa3,
+0x45, 0x01, 0xe5, 0x90, 0x54, 0x7c, 0xf8, 0xad, 0x56, 0x29, 0xbc, 0xd3, 0x62, 0x2e,
+0x95, 0x22, 0x95, 0x48, 0x69
 };
 
 /* Input valid lzma2 compressed data whereby the output is larger than the dictionary size */
@@ -205,7 +212,7 @@ ZTEST(nrf_compress_decompression, test_valid_data_decompression)
 			rc = implementation->decompress(inst, &dummy_data_input[pos],
 							(sizeof(dummy_data_input) - pos), true,
 							&offset, &output, &output_size);
-			pos += 1;
+			//pos += 1;
 		} else {
 			rc = implementation->decompress(inst, &dummy_data_input[pos], rc, false,
 							&offset, &output, &output_size);
@@ -302,7 +309,7 @@ ZTEST(nrf_compress_decompression, test_valid_data_too_large_decompression)
 			rc = implementation->decompress(inst, &dummy_data_too_large_input[pos],
 							(sizeof(dummy_data_too_large_input) - pos),
 							true, &offset, &output, &output_size);
-			pos += 1;
+			//pos += 1;
 		} else {
 			rc = implementation->decompress(inst, &dummy_data_too_large_input[pos], rc,
 							false, &offset, &output, &output_size);
@@ -413,7 +420,7 @@ ZTEST(nrf_compress_decompression, test_invalid_data_data)
 			rc = implementation->decompress(NULL, &dummy_data_input[pos],
 							(sizeof(dummy_data_input) - pos), true,
 							&offset, &output, &output_size);
-			pos += 1;
+			//pos += 1;
 		} else if (pos >= REDUCED_BUFFER_SIZE) {
 			/* Read in manipulated bad data */
 			uint8_t bad_data[REDUCED_BUFFER_SIZE];
@@ -508,7 +515,7 @@ ZTEST(nrf_compress_decompression, test_valid_data_decompression_random_sizes)
 			rc = implementation->decompress(inst, &dummy_data_input[pos],
 							(sizeof(dummy_data_input) - pos), true,
 							&offset, &output, &output_size);
-			pos += 1;
+			//pos += 1;
 		} else {
 			rc = implementation->decompress(inst, &dummy_data_input[pos], rc, false,
 							&offset, &output, &output_size);
@@ -627,7 +634,7 @@ ZTEST(nrf_compress_decompression, test_valid_data_decompression_reset)
 			rc = implementation->decompress(inst, &dummy_data_input[pos],
 							(sizeof(dummy_data_input) - pos), true,
 							&offset, &output, &output_size);
-			pos += 1;
+			//pos += 1;
 		} else {
 			rc = implementation->decompress(inst, &dummy_data_input[pos], rc, false,
 							&offset, &output, &output_size);

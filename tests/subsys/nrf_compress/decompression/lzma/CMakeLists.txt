@@ -13,8 +13,9 @@ target_sources(app PRIVATE src/main.c)
 
 generate_inc_file_for_target(
   app
-  ${ZEPHYR_NRFXLIB_MODULE_DIR}/tests/subsys/nrf_compress/decompression/dummy_data_input.txt.lzma
-  ${ZEPHYR_BINARY_DIR}/include/generated/dummy_data_input.inc
+# ${ZEPHYR_NRFXLIB_MODULE_DIR}/tests/subsys/nrf_compress/decompression/dummy_data_input.txt.lzma
+${ZEPHYR_NRFXLIB_MODULE_DIR}/tests/subsys/nrf_compress/decompression/compressed_file.txt.lzma
+${ZEPHYR_BINARY_DIR}/include/generated/dummy_data_input.inc
   )
 
 generate_inc_file_for_target(
