@@ -1,0 +1,18 @@
+/*
+ * Copyright (c) 2025 Nordic Semiconductor ASA
+ *
+ * SPDX-License-Identifier: LicenseRef-Nordic-5-Clause
+ */
+
+/ {
+	chosen {
+		zephyr,code-partition = &slot0_partition;
+	};
+};
+
+/* We set CONFIG_BOOT_WATCHDOG_FEED=n in MCUBoot board configuration
+ * so we don't need to enable the watchdog here
+ */
+// &wdt010 {
+// 	status = "okay";
+// };
