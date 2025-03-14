@@ -20,6 +20,8 @@ manifest:
     # NCS repositories are hosted here.
     - name: ncs
       url-base: https://github.com/nrfconnect
+    - name: mik7-ncs
+      url-base: https://github.com/nordic-mik7
     # Third-party repository sources:
     - name: zephyrproject
       url-base: https://github.com/zephyrproject-rtos
@@ -39,14 +41,14 @@ manifest:
   # If not otherwise specified, the projects below should be obtained
   # from the ncs remote.
   defaults:
-    remote: ncs
+    remote: mik7-ncs
 
   group-filter:
     - -nrf-802154
     - -dragoon
     - -find-my
-    - -babblesim
     - -libmodem
+    - -babblesim
     - -sidewalk
     - -bsec
     - -doc-internal
@@ -66,7 +68,7 @@ manifest:
     # https://developer.nordicsemi.com/nRF_Connect_SDK/doc/latest/zephyr/guides/modules.html
     - name: zephyr
       repo-path: sdk-zephyr
-      revision: 10eb60b48111d529ab30bae2a344226accb3ded6
+      revision: 3ded330c6d6f12ba8c89feb48b8750c74b745422
       import:
         # In addition to the zephyr repository itself, NCS also
         # imports the contents of zephyr/west.yml at the above
@@ -128,7 +130,7 @@ manifest:
           compare-by-default: true
     - name: mcuboot
       repo-path: sdk-mcuboot
-      revision: 148712e7b4618aadbedd04e8d3ce5c3847d3be4f
+      revision: 2c5a4e86fd852e57a7289b51e6ec0866f598a69b
       path: bootloader/mcuboot
     - name: qcbor
       url: https://github.com/laurencelundblade/QCBOR
