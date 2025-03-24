@@ -7,12 +7,7 @@
 / {
 	chosen {
 		zephyr,code-partition = &slot0_partition;
+		zephyr,uart-mcumgr = &uart136;
 	};
 };
 
-/* We set CONFIG_BOOT_WATCHDOG_FEED=n in MCUBoot board configuration
- * so we don't need to enable the watchdog here
- */
-// &wdt010 {
-// 	status = "okay";
-// };

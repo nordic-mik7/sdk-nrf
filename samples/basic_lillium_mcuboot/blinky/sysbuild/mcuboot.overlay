@@ -1,0 +1,24 @@
+// Following is because enabling ipc node in dts will enable canonical ZCBOR encoding
+// which needs legacy RC behaviour to work with mcumgr-client and other PC tools.
+// When tools are updated, this can be removed. There is no Kconfig option to set legacy RC behaviour
+// in MCUBoot.
+/delete-node/&cpusec_cpuapp_ipc;
+
+/ {
+	chosen {
+		zephyr,code-partition = &boot_partition;
+		zephyr,uart-mcumgr = &uart136;
+	};
+
+	aliases {
+		mcuboot-button0 = &button1;
+		mcuboot-led0 = &led1;
+	};
+};
+
+/* We set CONFIG_BOOT_WATCHDOG_FEED=n in MCUBoot board configuration
+ * so we don't need to enable the watchdog here
+ */
+// &wdt010 {
+// 	status = "okay";
+// };
